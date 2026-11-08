@@ -95,6 +95,11 @@ final class NativeTextView: NSTextView {
     /// relative to it (a proofread's context is one paragraph, a rewrite's the document).
     var writingToolsContextStarts: [UUID: Int] = [:]
 
+    override func drawBackground(in rect: NSRect) {
+        super.drawBackground(in: rect)
+        drawFenceBackgrounds(in: rect)
+    }
+
     override func viewWillMove(toWindow newWindow: NSWindow?) {
         if let window, window !== newWindow {
             NotificationCenter.default.removeObserver(self, name: NSWindow.willCloseNotification, object: window)

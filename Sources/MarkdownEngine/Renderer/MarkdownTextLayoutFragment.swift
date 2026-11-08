@@ -29,6 +29,13 @@ extension NSAttributedString.Key {
     /// Int nesting level (1-based) of a blockquote line; the fragment
     /// paints that many vertical bars in the left gutter.
     static let blockquoteLevel = NSAttributedString.Key("BlockquoteLevel")
+    /// One-based nesting depth of a rendered Markdown code fence.
+    static let markdownFenceDepth = NSAttributedString.Key("MarkdownFenceDepth")
+    /// Full-width fill color for a fenced code block, independent of
+    /// transient glyph highlights that can override `.backgroundColor`.
+    static let markdownFenceBackground = NSAttributedString.Key("MarkdownFenceBackground")
+    /// Enclosing fence fills, outermost first, for contiguous left-edge rails.
+    static let markdownFenceRailColors = NSAttributedString.Key("MarkdownFenceRailColors")
     /// Marks a bullet-list marker char (`-`/`*`/`+`) whose glyph is hidden so
     /// the fragment can paint a `•` in its place. Set to `true`.
     static let bulletMarker = NSAttributedString.Key("BulletListMarker")
@@ -63,6 +70,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     /// shared so the styler's text indent and the painted bars line up.
     static let blockquoteIndentPerLevel: CGFloat = 18
     static let blockquoteBarWidth: CGFloat = 3
+    static let markdownFenceRailWidth: CGFloat = 10
 
     /// Strip below an overlay block for the legacy-small scroller (~11pt) + buffer.
     static let scrollableBlockScrollerStrip: CGFloat = 14
@@ -75,13 +83,14 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
     // MARK: - Rendering surface
 
-    /// Extend rendering bounds for code-block backgrounds (full container width)
-    /// and block images drawn below text via paragraphSpacing.
+    /// Extend rendering bounds for decorations outside the glyph surface and
+    /// block images drawn below text via paragraphSpacing. Fence backgrounds
+    /// are drawn by NativeTextView beneath TextKit's selection.
     override var renderingSurfaceBounds: CGRect {
         var bounds = super.renderingSurfaceBounds
         // Task checkboxes too: the box draws left of the first glyph (marker
         // slot), outside the default text surface — TextKit would clip it.
-        if hasCodeBlockBackground || hasThematicBreak || hasBlockquote || hasTaskCheckbox {
+        if hasThematicBreak || hasBlockquote || hasTaskCheckbox {
             let containerWidth = textLayoutManager?.textContainer?.size.width ?? bounds.width
             // Extend left to container edge
             bounds.origin.x = -layoutFragmentFrame.origin.x
@@ -108,10 +117,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
            rangeInElement.location.compare(hidden.endLocation) != .orderedAscending {
             return
         }
-        // 1. Code-block backgrounds (behind text)
-        drawCodeBlockBackground(at: point, in: context)
-
-        // 1b. Line-box fills (`==highlight==` and friends), behind text
+        // 1. Line-box fills (`==highlight==` and friends), behind text
         drawBlockBackgrounds(at: point, in: context)
 
         // 2. LaTeX images (behind text — hidden markers are invisible anyway)
@@ -148,6 +154,11 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
     private var textStorage: NSTextStorage? {
         (textLayoutManager?.textContentManager as? NSTextContentStorage)?.textStorage
+    }
+
+    private func markdownFenceTextOffset(at location: Int, in storage: NSTextStorage) -> CGFloat {
+        let depth = storage.attribute(.markdownFenceDepth, at: location, effectiveRange: nil) as? Int ?? 1
+        return CGFloat(max(0, depth - 1)) * Self.markdownFenceRailWidth
     }
 
     /// Returns the drawing position for a character at `docIndex` (document-level NSRange location).
@@ -191,14 +202,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
         return nil
     }
 
-    // MARK: - Code Block Background
-
-    private var hasCodeBlockBackground: Bool {
-        guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return false }
-        let bgColor = ts.attribute(.backgroundColor, at: range.location, effectiveRange: nil) as? NSColor
-        guard let bgColor else { return false }
-        return isCodeBlockBackgroundColor(bgColor)
-    }
+    // MARK: - Fragment Decorations
 
     private var hasThematicBreak: Bool {
         guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return false }
@@ -234,106 +238,6 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
             }
         }
         return found
-    }
-
-    private func drawCodeBlockBackground(at point: CGPoint, in context: CGContext) {
-        guard let ts = textStorage, let range = fragmentNSRange, range.length > 0 else { return }
-
-        // Only fenced code-block fragments get the full-width fill (first char must carry the code background).
-        guard let color = ts.attribute(.backgroundColor, at: range.location, effectiveRange: nil) as? NSColor,
-              isCodeBlockBackgroundColor(color) else { return }
-
-        let containerWidth = textLayoutManager?.textContainer?.size.width ?? layoutFragmentFrame.width
-
-        var effectiveHeight = layoutFragmentFrame.height
-        if textLineFragments.count > 1,
-           let lastLF = textLineFragments.last,
-           lastLF.characterRange.length == 0 {
-            effectiveHeight -= lastLF.typographicBounds.height
-        }
-
-        let scale = textLayoutManager?.textContainer?.textView?.window?.backingScaleFactor
-            ?? NSScreen.main?.backingScaleFactor ?? 2.0
-        let rawY = point.y
-        let rawMaxY = point.y + effectiveHeight
-        let snappedY = floor(rawY * scale) / scale
-        let snappedMaxY = ceil(rawMaxY * scale) / scale
-
-        // Draw full-width background, clipping out any active selection rects
-        // so the system's blue selection highlight remains visible inside code blocks.
-        NSGraphicsContext.saveGraphicsState()
-        defer { NSGraphicsContext.restoreGraphicsState() }
-        let nsContext = NSGraphicsContext(cgContext: context, flipped: true)
-        NSGraphicsContext.current = nsContext
-
-        let bgRect = CGRect(
-            x: point.x - layoutFragmentFrame.origin.x,
-            y: snappedY,
-            width: containerWidth,
-            height: snappedMaxY - snappedY
-        )
-
-        let selectionRects = selectionRectsInDrawCoordinates(drawPoint: point, snappedY: snappedY, snappedMaxY: snappedMaxY)
-        color.setFill()
-        if selectionRects.isEmpty {
-            NSBezierPath(rect: bgRect).fill()
-        } else {
-            let path = NSBezierPath()
-            path.windingRule = .evenOdd
-            path.appendRect(bgRect)
-            for r in selectionRects {
-                path.appendRect(r.intersection(bgRect))
-            }
-            path.fill()
-        }
-    }
-
-    /// Returns active text-selection rectangles intersecting this fragment, in
-    /// the same draw-relative coordinate system used by `drawCodeBlockBackground`.
-    private func selectionRectsInDrawCoordinates(drawPoint: CGPoint, snappedY: CGFloat, snappedMaxY: CGFloat) -> [CGRect] {
-        guard let tlm = textLayoutManager else { return [] }
-        var rects: [CGRect] = []
-
-        let dx = drawPoint.x - layoutFragmentFrame.origin.x
-        let myRange = self.rangeInElement
-
-        for selection in tlm.textSelections {
-            for textRange in selection.textRanges {
-                let interStart = textRange.location.compare(myRange.location) == .orderedAscending
-                    ? myRange.location : textRange.location
-                let interEnd = textRange.endLocation.compare(myRange.endLocation) == .orderedDescending
-                    ? myRange.endLocation : textRange.endLocation
-                guard interStart.compare(interEnd) == .orderedAscending,
-                      let intersection = NSTextRange(location: interStart, end: interEnd) else { continue }
-
-                tlm.enumerateTextSegments(in: intersection, type: .selection, options: []) { _, segFrame, _, _ in
-                    // Expand vertically to match the bgRect's snapped span so the
-                    // even-odd cut-out is geometrically congruent with the fill.
-                    let drawRect = CGRect(
-                        x: segFrame.origin.x + dx,
-                        y: snappedY,
-                        width: segFrame.width,
-                        height: snappedMaxY - snappedY
-                    )
-                    rects.append(drawRect)
-                    return true
-                }
-            }
-        }
-        return rects
-    }
-
-    private func isCodeBlockBackgroundColor(_ color: NSColor) -> Bool {
-        let highlighter = (textLayoutManager?.textContainer?.textView as? NativeTextView)?
-            .configuration.services.syntaxHighlighter
-            ?? PlainTextSyntaxHighlighter()
-        let currentBg = highlighter.backgroundColor()
-        guard let colorRGB = color.usingColorSpace(.deviceRGB),
-              let currentBgRGB = currentBg.usingColorSpace(.deviceRGB) else { return false }
-        let tolerance: CGFloat = 0.03
-        return abs(colorRGB.redComponent - currentBgRGB.redComponent) < tolerance &&
-               abs(colorRGB.greenComponent - currentBgRGB.greenComponent) < tolerance &&
-               abs(colorRGB.blueComponent - currentBgRGB.blueComponent) < tolerance
     }
 
     // MARK: - Line-Box Backgrounds
@@ -516,7 +420,7 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     /// centering is assertable headlessly, the way `blockBackgroundFills(at:)`
     /// is — nothing here touches a graphics context.
     ///
-    /// The rule spans the full container width regardless of how many source
+    /// The rule spans the available content width regardless of how many source
     /// characters produced it, so a 3-char `---` matches an 80-char one. A mark
     /// is measured in the view's BASE font, not the run's: the run carries the
     /// hidden-marker styling that makes the source characters invisible.
@@ -553,6 +457,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
             guard docStart < ts.length else { continue }
             guard ts.attribute(.thematicBreak, at: docStart, effectiveRange: nil) as? Bool == true else { continue }
             let tb = lineFragment.typographicBounds
+            let inset = markdownFenceTextOffset(at: docStart, in: ts)
+            let contentX = containerX + inset
+            let contentWidth = max(0, containerWidth - inset)
 
             if let mark = ts.attribute(.thematicBreakMark, at: docStart, effectiveRange: nil) as? String,
                !mark.isEmpty {
@@ -582,8 +489,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 // includes side bearings that need not be symmetric, so
                 // centering the layout box can leave the ink visibly off-axis.
                 let layoutX = inkIsUsable
-                    ? containerX + containerWidth / 2 - ink.midX
-                    : containerX + (containerWidth - layoutSize.width) / 2
+                    ? contentX + contentWidth / 2 - ink.midX
+                    : contentX + (contentWidth - layoutSize.width) / 2
                 let inkRect = CGRect(
                     x: inkIsUsable ? layoutX + ink.minX : layoutX,
                     y: inkIsUsable ? baselineY - ink.maxY : lineCenterY - layoutSize.height / 2,
@@ -600,18 +507,18 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
                 // tb.origin.y is already relative to this layout fragment.
                 let centerY = point.y + tb.origin.y + tb.height / 2
                 out.append(ThematicBreakDecoration(
-                    rect: CGRect(x: containerX, y: centerY - 0.5, width: containerWidth, height: 1),
+                    rect: CGRect(x: contentX, y: centerY - 0.5, width: contentWidth, height: 1),
                     mark: nil,
                     font: font,
-                    drawOrigin: CGPoint(x: containerX, y: centerY - 0.5)
+                    drawOrigin: CGPoint(x: contentX, y: centerY - 0.5)
                 ))
             }
         }
         return out
     }
 
-    /// Paint what `thematicBreakDecorations(at:)` worked out: a full-width rule,
-    /// or the configured mark centered in the container.
+    /// Paint what `thematicBreakDecorations(at:)` worked out: a content-width
+    /// rule, or the configured mark centered after any fence rails.
     private func drawThematicBreaks(at point: CGPoint, in context: CGContext) {
         let decorations = thematicBreakDecorations(at: point)
         guard !decorations.isEmpty else { return }
@@ -678,8 +585,9 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
             if let level = ts.attribute(.blockquoteLevel, at: docStart, effectiveRange: nil) as? Int {
                 // tb.origin.y is already relative to this layout fragment.
                 let barY = point.y + tb.origin.y
+                let fenceInset = markdownFenceTextOffset(at: docStart, in: ts)
                 for i in 0..<level {
-                    let barX = leftEdge + CGFloat(i) * indentPerLevel + indentPerLevel * 0.25
+                    let barX = leftEdge + fenceInset + CGFloat(i) * indentPerLevel + indentPerLevel * 0.25
                     NSBezierPath(rect: CGRect(
                         x: barX, y: barY, width: barWidth, height: tb.height
                     )).fill()

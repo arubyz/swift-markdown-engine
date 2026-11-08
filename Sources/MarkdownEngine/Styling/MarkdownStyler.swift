@@ -53,8 +53,21 @@ extension MarkdownStyler {
         /// Pre-classified per-kind token arrays; nil for direct callers (tests),
         /// which fall back to classifying `tokens` on demand.
         var classified: ClassifiedStyleTokens? = nil
+        /// Precomputed once for image/table sizing; most documents have none.
+        var markdownFenceBodies: [NSRange] = []
 
         var services: MarkdownEditorServices { configuration.services }
+
+        /// Text starts after one rail per enclosing Markdown fence beyond
+        /// the outermost. Use the same inset when sizing rasterized blocks.
+        func markdownFenceTextInset(for token: MarkdownToken) -> CGFloat {
+            guard configuration.renderMarkdownCodeFences else { return 0 }
+            let depth = markdownFenceBodies.reduce(0) { count, body in
+                count + (token.range.location >= body.location
+                    && NSMaxRange(token.range) <= NSMaxRange(body) ? 1 : 0)
+            }
+            return CGFloat(max(0, depth - 1)) * MarkdownTextLayoutFragment.markdownFenceRailWidth
+        }
 
         // Per-kind indexed arrays: the cached classification, or a one-off
         // classification of `tokens` when a direct caller passed none.
@@ -310,7 +323,7 @@ enum MarkdownStyler {
                 ?? (baseFont.ascender - baseFont.descender + baseFont.leading)
         )
         let hiddenMarkerSize = configuration.markers.hiddenMarkerFontSize
-        return StylingContext(
+        var context = StylingContext(
             nsText: text as NSString,
             tokens: tokens,
             codeTokens: codeTokens,
@@ -327,6 +340,12 @@ enum MarkdownStyler {
             scopeBounds: scopeBounds,
             classified: classified
         )
+        if configuration.renderMarkdownCodeFences {
+            context.markdownFenceBodies = tokens.compactMap {
+                MarkdownTokenizer.markdownFenceBody($0, in: context.nsText)
+            }
+        }
+        return context
     }
 }
 

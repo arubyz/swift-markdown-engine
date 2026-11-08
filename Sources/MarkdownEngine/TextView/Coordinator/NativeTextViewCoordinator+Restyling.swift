@@ -158,6 +158,7 @@ extension NativeTextViewCoordinator {
             for (range, attrs) in runs {
                 built.setAttributes(attrs, range: range)
             }
+            TextStylingService.indentMarkdownFenceParagraphs(in: built, ranges: [fullRange])
         }
 
         // ONE live-storage mutation carries the whole styled document across. This is the
@@ -272,7 +273,29 @@ extension NativeTextViewCoordinator {
             }
         }
 
-        let tokens = parseState.tokens(for: text, edit: edit, registry: cachedExtensionRegistry)
+        let outerTokens = parseState.tokens(for: text, edit: edit, registry: cachedExtensionRegistry)
+        let nsText = text as NSString
+        let tokens: [MarkdownToken]
+        if configuration.renderMarkdownCodeFences {
+            var expanded: [MarkdownToken] = []
+            func append(_ tokens: [MarkdownToken]) {
+                for token in tokens {
+                    expanded.append(token)
+                    guard let body = MarkdownTokenizer.markdownFenceBody(token, in: nsText),
+                          body.length > 0 else { continue }
+                    let bodyText = nsText.substring(with: body)
+                    let blocks = BlockParser.computeBlocks(bodyText, registry: cachedExtensionRegistry)
+                    let inner = MarkdownTokenizer.fullTokens(
+                        blocks: blocks, ns: bodyText as NSString, registry: cachedExtensionRegistry
+                    )
+                    append(inner.map { $0.shifted(by: body.location) })
+                }
+            }
+            append(outerTokens)
+            tokens = expanded
+        } else {
+            tokens = outerTokens
+        }
         let tClassify = DispatchTime.now().uptimeNanoseconds
         var codeTokens: [MarkdownToken] = []
         var latexTokens: [MarkdownToken] = []
@@ -295,7 +318,10 @@ extension NativeTextViewCoordinator {
         for (index, token) in tokens.enumerated() {
             switch token.kind {
             case .codeBlock, .inlineCode:
-                codeTokens.append(token)
+                if !configuration.renderMarkdownCodeFences
+                    || MarkdownTokenizer.markdownFenceBody(token, in: nsText) == nil {
+                    codeTokens.append(token)
+                }
                 if token.kind == .codeBlock {
                     codeBlockTokensWithIndices.append((index, token))
                 }
@@ -320,7 +346,6 @@ extension NativeTextViewCoordinator {
             }
         }
 
-        let nsText = text as NSString
         let tableParagraphRanges = tableTokens.compactMap {
             $0.standaloneParagraphRange(in: nsText)
         }
@@ -434,10 +459,8 @@ extension NativeTextViewCoordinator {
                         classified: parsed.classified, blocks: parsed.blocks)
     }
 
-    /// Width changes cannot alter non-table Markdown styling. Reuse the
-    /// current parse and its indexed table paragraphs, then run only the table
-    /// renderer so a resize does not traverse the generic AST or unrelated
-    /// image passes.
+    /// Reuse the current parse for width-sensitive rendered blocks. Nested
+    /// images also need a fresh width cap when their enclosing fence narrows.
     func restyleTablesForWidthChange(in textView: NSTextView) -> [NSRange] {
         let documentText: String
         let parsed: ParsedDocument
@@ -451,9 +474,24 @@ extension NativeTextViewCoordinator {
             documentText = textView.string
             parsed = parsedDocument(for: documentText)
         }
-        guard !parsed.tableParagraphRanges.isEmpty else { return [] }
-
         let nsText = documentText as NSString
+        var paragraphs = parsed.tableParagraphRanges
+        if configuration.renderMarkdownCodeFences {
+            let fenceBodies = parsed.tokens.compactMap {
+                MarkdownTokenizer.markdownFenceBody($0, in: nsText)
+            }
+            for token in parsed.tokens where token.kind == .imageEmbed || token.kind == .imageLink {
+                let enclosingCount = fenceBodies.reduce(0) { count, body in
+                    count + (token.range.location >= body.location
+                        && NSMaxRange(token.range) <= NSMaxRange(body) ? 1 : 0)
+                }
+                if enclosingCount > 1, let paragraph = token.standaloneParagraphRange(in: nsText) {
+                    paragraphs.append(paragraph)
+                }
+            }
+        }
+        guard !paragraphs.isEmpty else { return [] }
+
         activeTokenIndices = activeTokenIndices(
             parsed: parsed,
             selection: textView.selectedRange(),
@@ -462,7 +500,7 @@ extension NativeTextViewCoordinator {
         )
         return restyleTextView(
             textView,
-            paragraphCandidates: parsed.tableParagraphRanges,
+            paragraphCandidates: paragraphs,
             tokens: parsed.tokens,
             classified: parsed.classified,
             blocks: parsed.blocks,

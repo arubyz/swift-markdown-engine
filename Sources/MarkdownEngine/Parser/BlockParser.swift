@@ -276,9 +276,11 @@ enum BlockParser {
 
         /// Line index of the fence closing a code block opened at `start`; nil when unclosed.
         func fenceCloseIndex(from start: Int) -> Int? {
+            let openingLength = CodeFence.markerLength(in: lineText(start))
+            guard openingLength >= 3 else { return nil }
             var scan = start + 1
             while scan < lines.count {
-                if isFence(lineText(scan)) { return scan }
+                if CodeFence.isClosing(lineText(scan), openingLength: openingLength) { return scan }
                 scan += 1
             }
             return nil
@@ -385,9 +387,9 @@ enum BlockParser {
         line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// An opening or closing fence line: starts with three backticks.
+    /// A possible opening fence line: starts with three or more backticks.
     private static func isFence(_ line: String) -> Bool {
-        line.hasPrefix("```")
+        CodeFence.markerLength(in: line) >= 3
     }
 
     /// `^\s*(-{3,}|\*{3,}|_{3,})\s*$` — a solid run of 3+ of one of `- * _`.

@@ -15,6 +15,27 @@ import Foundation
 // MARK: - Tokenizer
 enum MarkdownTokenizer {
 
+    private static let markdownFenceOpening = try! NSRegularExpression(
+        pattern: #"^`{3,}[ \t]*markdown[ \t]*\r?\n$"#, options: [.caseInsensitive]
+    )
+
+    static func isMarkdownFence(openingLine: NSRange, in text: NSString) -> Bool {
+        guard openingLine.length > 0, NSMaxRange(openingLine) <= text.length else { return false }
+        let line = text.substring(with: openingLine)
+        return markdownFenceOpening.firstMatch(
+            in: line, range: NSRange(location: 0, length: (line as NSString).length)
+        ) != nil
+    }
+
+    /// Body of a closed `markdown` fence, in the parent document's coordinates.
+    /// The normal code-block token remains the source of truth for fence pairing.
+    static func markdownFenceBody(_ token: MarkdownToken, in text: NSString) -> NSRange? {
+        guard token.kind == .codeBlock,
+              token.markerRanges.count == 2,
+              isMarkdownFence(openingLine: token.markerRanges[0], in: text) else { return nil }
+        return token.contentRange
+    }
+
     // MARK: - Code Block Helpers
 
     static func extractLanguage(from token: MarkdownToken, in text: String) -> String? {
@@ -23,7 +44,13 @@ enum MarkdownTokenizer {
               openingMarker.length > 4 else { return nil }
 
         let nsText = text as NSString
-        let langRange = NSRange(location: openingMarker.location + 3, length: openingMarker.length - 4)
+        let openingLine = nsText.substring(with: openingMarker)
+        let markerLength = CodeFence.markerLength(in: openingLine)
+        guard markerLength >= 3 else { return nil }
+        let langRange = NSRange(
+            location: openingMarker.location + markerLength,
+            length: openingMarker.length - markerLength
+        )
 
         guard langRange.location + langRange.length <= nsText.length else { return nil }
 

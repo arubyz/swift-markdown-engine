@@ -201,10 +201,21 @@ extension NativeTextView {
         let hostBounds = (superview ?? self).bounds
         for (_, overlay) in wideTableOverlays {
             var f = overlay.frame
-            f.origin.x = hostBounds.minX
-            f.size.width = hostBounds.width
+            let storage = textStorage
+            let depth: Int
+            if let storage, overlay.anchorTextLocation >= 0, overlay.anchorTextLocation < storage.length {
+                depth = storage.attribute(.markdownFenceDepth, at: overlay.anchorTextLocation, effectiveRange: nil) as? Int ?? 1
+            } else {
+                depth = 1
+            }
+            if depth > 1 {
+                f.origin.x += insetDelta
+            } else {
+                f.origin.x = hostBounds.minX
+                f.size.width = hostBounds.width
+                overlay.leftContentInset = max(0, overlay.leftContentInset + insetDelta)
+            }
             overlay.frame = f
-            overlay.leftContentInset = max(0, overlay.leftContentInset + insetDelta)
         }
     }
 
@@ -302,11 +313,20 @@ extension NativeTextView {
                                         y: textContainerOrigin.y + anchorRect.minY)
             let anchorInHost = convert(anchorTopLeft, to: host)
             let columnLeft = breakout ? anchorInHost.x - hostBounds.minX : anchorTopLeft.x
-            let overlayFrame: NSRect = breakout
-                ? NSRect(x: hostBounds.minX, y: anchorInHost.y, width: hostBounds.width, height: totalHeight)
-                : NSRect(x: columnLeft, y: anchorTopLeft.y, width: containerWidth, height: totalHeight)
+            let depth = storage.attribute(.markdownFenceDepth, at: attrRange.location, effectiveRange: nil) as? Int ?? 1
+            let fenceInset = CGFloat(max(0, depth - 1)) * MarkdownTextLayoutFragment.markdownFenceRailWidth
+            let overlayFrame: NSRect
+            if breakout && fenceInset == 0 {
+                overlayFrame = NSRect(x: hostBounds.minX, y: anchorInHost.y, width: hostBounds.width, height: totalHeight)
+            } else {
+                overlayFrame = NSRect(
+                    x: breakout ? anchorInHost.x : anchorTopLeft.x,
+                    y: breakout ? anchorInHost.y : anchorTopLeft.y,
+                    width: max(1, containerWidth - fenceInset), height: totalHeight
+                )
+            }
             // Breakout: table starts at the text column's left edge; the left margin is scrollable space.
-            let leftContentInset: CGFloat = breakout ? max(0, columnLeft) : 0
+            let leftContentInset: CGFloat = breakout && fenceInset == 0 ? max(0, columnLeft) : 0
 
             if let existing = wideTableOverlays[sourceID] {
                 if !existing.frame.equalTo(overlayFrame) {

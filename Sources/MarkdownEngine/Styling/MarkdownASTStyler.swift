@@ -31,7 +31,8 @@ enum MarkdownASTStyler {
         wikiLinkIDProvider: @escaping (NSRange) -> String? = { _ in nil },
         scopedRanges: [NSRange]? = nil,
         precomputedBlocks: [Block]? = nil,
-        configuration: MarkdownEditorConfiguration = .default
+        configuration: MarkdownEditorConfiguration = .default,
+        markdownFenceDepth: Int = 0
     ) -> [StyledRange] {
         let baseFont = NSFont(name: fontName, size: fontSize) ?? .systemFont(ofSize: fontSize)
         let baseLineHeight = ceil(baseFont.ascender - baseFont.descender + baseFont.leading)
@@ -64,6 +65,7 @@ enum MarkdownASTStyler {
             codeFont: codeFont,
             codeBackground: configuration.services.syntaxHighlighter.backgroundColor(),
             codeParagraphStyle: codePara,
+            markdownFenceDepth: markdownFenceDepth,
             inlineMarkerFont: NSFont(name: fontName, size: hiddenSize) ?? .systemFont(ofSize: hiddenSize),
             caret: caretLocation,
             selection: selection,
@@ -617,6 +619,7 @@ enum MarkdownASTStyler {
         let codeFont: NSFont
         let codeBackground: NSColor
         let codeParagraphStyle: NSParagraphStyle
+        let markdownFenceDepth: Int
         let inlineMarkerFont: NSFont
         let caret: Int
         /// The full selected range (nil/empty when the selection is a bare
@@ -793,9 +796,62 @@ enum MarkdownASTStyler {
 
     private static func styleCodeBlock(range: NSRange, ctx: Ctx, into attrs: inout [StyledRange]) {
         let parts = codeBlockParts(range, ctx.ns)
-        attrs.append((parts.codeRange, [
-            .font: ctx.codeFont, .backgroundColor: ctx.codeBackground, .paragraphStyle: ctx.codeParagraphStyle,
-        ]))
+        if ctx.config.renderMarkdownCodeFences,
+           MarkdownTokenizer.isMarkdownFence(openingLine: parts.openFence, in: ctx.ns) {
+            // Keep the fence and its Markdown body in the same text storage.
+            // The background spans the block, while the body gets normal
+            // Markdown attributes in its own source-relative parse.
+            let depth = ctx.markdownFenceDepth + 1
+            let shade = codeBackground(at: depth, ctx: ctx)
+            var fenceAttrs: [NSAttributedString.Key: Any] = [
+                .markdownFenceBackground: shade,
+                .markdownFenceDepth: depth,
+            ]
+            if depth > 1 { fenceAttrs[.markdownFenceRailColors] = railColors(at: depth, ctx: ctx) }
+            attrs.append((parts.codeRange, fenceAttrs))
+            let markerInk = (ctx.isActive(range) || ctx.selectionIntersects(range))
+                ? ctx.theme.mutedText : NSColor.clear
+            let markerAttrs: [NSAttributedString.Key: Any] = [
+                .foregroundColor: markerInk,
+                .font: ctx.codeFont,
+                .paragraphStyle: ctx.codeParagraphStyle,
+            ]
+            attrs.append((parts.openFence, markerAttrs))
+            attrs.append((parts.closeFence, markerAttrs))
+            if parts.content.length > 0 {
+                let body = ctx.ns.substring(with: parts.content)
+                let offset = parts.content.location
+                let localCaret = ctx.caret >= offset && ctx.caret <= NSMaxRange(parts.content)
+                    ? ctx.caret - offset : -1
+                let localSelection = ctx.selection.flatMap { selected -> NSRange? in
+                    let overlap = NSIntersectionRange(selected, parts.content)
+                    guard overlap.length > 0 else { return nil }
+                    return NSRange(location: overlap.location - offset, length: overlap.length)
+                }
+                let nested = styleAttributes(
+                    text: body, fontName: ctx.fontName, fontSize: ctx.baseFont.pointSize,
+                    caretLocation: localCaret, selection: localSelection,
+                    wikiLinkIDProvider: { local in
+                        ctx.wikiLinkID(NSRange(location: local.location + offset, length: local.length))
+                    }, configuration: ctx.config, markdownFenceDepth: depth
+                )
+                attrs.append(contentsOf: nested.map { styled in
+                    (NSRange(location: styled.range.location + offset, length: styled.range.length), styled.attributes)
+                })
+            }
+            return
+        }
+        let nestedDepth = ctx.markdownFenceDepth > 0 ? ctx.markdownFenceDepth + 1 : 0
+        let shade = nestedDepth > 0 ? codeBackground(at: nestedDepth, ctx: ctx) : ctx.codeBackground
+        var codeAttrs: [NSAttributedString.Key: Any] = [
+            .font: ctx.codeFont,
+            .paragraphStyle: ctx.codeParagraphStyle,
+            .markdownFenceBackground: shade,
+        ]
+        if nestedDepth == 0 { codeAttrs[.backgroundColor] = shade }
+        if nestedDepth > 0 { codeAttrs[.markdownFenceDepth] = nestedDepth }
+        if nestedDepth > 1 { codeAttrs[.markdownFenceRailColors] = railColors(at: nestedDepth, ctx: ctx) }
+        attrs.append((parts.codeRange, codeAttrs))
         // Suppress spell-check underlines on the whole fenced block — code is not prose.
         attrs.append((parts.codeRange, [.spellingState: 0]))
         let codeContent = ctx.ns.substring(with: parts.content)
@@ -812,6 +868,17 @@ enum MarkdownASTStyler {
             : [.foregroundColor: NSColor.clear, .font: ctx.codeFont]   // hiddenMarkerFont == codeFont
         attrs.append((parts.openFence, markerAttrs))
         attrs.append((parts.closeFence, markerAttrs))
+    }
+
+    private static func codeBackground(at depth: Int, ctx: Ctx) -> NSColor {
+        ctx.codeBackground.blended(
+            withFraction: CGFloat((depth - 1) % 4) * 0.065,
+            of: ctx.theme.bodyText
+        ) ?? ctx.codeBackground
+    }
+
+    private static func railColors(at depth: Int, ctx: Ctx) -> [NSColor] {
+        (1..<depth).map { codeBackground(at: $0, ctx: ctx) }
     }
 
     /// Split a fenced-code range into open fence (+language), content, close fence, and language.
@@ -832,8 +899,11 @@ enum MarkdownASTStyler {
         let content = NSRange(location: openEnd, length: max(0, lastLine.location - openEnd))
 
         var language: String?
-        if openFence.length > 3 {
-            let raw = ns.substring(with: NSRange(location: start + 3, length: openFence.length - 3))
+        let markerLength = CodeFence.markerLength(in: ns.substring(with: openFence))
+        if markerLength >= 3, openFence.length > markerLength {
+            let raw = ns.substring(with: NSRange(
+                location: start + markerLength, length: openFence.length - markerLength
+            ))
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             language = raw.isEmpty ? nil : raw
         }

@@ -242,7 +242,7 @@ extension MarkdownStyler {
             // Cells wrap to the container width (Obsidian-style); the render
             // only exceeds it when the per-column floors genuinely don't fit,
             // in which case the scrollable overlay below takes over.
-            let containerWidth = effectiveContainerWidth(for: ctx)
+            let containerWidth = max(1, effectiveContainerWidth(for: ctx) - ctx.markdownFenceTextInset(for: token))
             let (image, rendered) = tableImage(
                 for: source,
                 parsed: parsed,

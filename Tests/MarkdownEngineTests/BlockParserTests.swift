@@ -68,6 +68,21 @@ struct BlockParserTests {
         #expect(BlockParser.parse("```\ncode\n```\n") == [b(.fencedCode, 0, 13)])
     }
 
+    @Test("Long fences ignore shorter backtick runs and close with at least their opening length")
+    func variableLengthFence() {
+        let text = "`````markdown\n````markdown\n```swift\ncode\n```\n````\n`````\ntail"
+        let blocks = BlockParser.parse(text)
+        #expect(blocks.count == 2)
+        #expect(blocks.first?.kind == .fencedCode)
+        #expect(blocks.last?.kind == .paragraph)
+        assertTiles(text)
+
+        let longerClose = "````swift\ncode\n`````\n"
+        #expect(BlockParser.parse(longerClose).map(\.kind) == [.fencedCode])
+        let tooShort = "````swift\ncode\n```\n"
+        #expect(!BlockParser.parse(tooShort).contains { $0.kind == .fencedCode })
+    }
+
     @Test("an unclosed fence stays literal text — blocks below are not swallowed")
     func unclosedFenceDoesNotSwallow() {
         // ```\n then a table, a thematic break, block LaTeX, and a link

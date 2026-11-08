@@ -102,18 +102,39 @@ struct TextStylingService {
                 configuration: configuration
             )
         case .tables:
-            styledRanges = MarkdownStyler.styleTableAttributes(
-                text: text,
-                fontName: baseFont.fontName,
-                fontSize: baseFont.pointSize,
-                layoutBridge: layoutBridge,
-                activeTokenIndices: activeTokenIndices,
-                wikiLinkIDProvider: wikiLinkIDProvider,
-                precomputedTokens: precomputedTokens,
-                classified: classified,
-                scopedRanges: paragraphs,
-                configuration: configuration
-            )
+            if configuration.renderMarkdownCodeFences {
+                // The table-only pass resets each touched paragraph to base
+                // attributes. Nested fences also need their depth, rail, and
+                // background attributes restored after a width change.
+                styledRanges = MarkdownStyler.styleAttributes(
+                    text: text,
+                    fontName: baseFont.fontName,
+                    fontSize: baseFont.pointSize,
+                    layoutBridge: layoutBridge,
+                    caretLocation: caretLocation,
+                    selection: selection,
+                    activeTokenIndices: activeTokenIndices,
+                    wikiLinkIDProvider: wikiLinkIDProvider,
+                    precomputedTokens: precomputedTokens,
+                    classified: classified,
+                    precomputedBlocks: precomputedBlocks,
+                    scopedRanges: paragraphs,
+                    configuration: configuration
+                )
+            } else {
+                styledRanges = MarkdownStyler.styleTableAttributes(
+                    text: text,
+                    fontName: baseFont.fontName,
+                    fontSize: baseFont.pointSize,
+                    layoutBridge: layoutBridge,
+                    activeTokenIndices: activeTokenIndices,
+                    wikiLinkIDProvider: wikiLinkIDProvider,
+                    precomputedTokens: precomputedTokens,
+                    classified: classified,
+                    scopedRanges: paragraphs,
+                    configuration: configuration
+                )
+            }
         }
         let wideTableAnchorRanges: [NSRange]
         switch content {
@@ -195,6 +216,51 @@ struct TextStylingService {
                 for (key, value) in attrs {
                     storage?.addAttribute(key, value: value, range: clippedRange)
                 }
+            }
+        }
+
+        indentMarkdownFenceParagraphs(in: storage, ranges: paragraphs)
+    }
+
+    /// Compose fence depth with whichever paragraph style the normal styler
+    /// selected. Shared by the initial flattened-run load and edit restyles.
+    static func indentMarkdownFenceParagraphs(in storage: NSMutableAttributedString?, ranges: [NSRange]) {
+        // A full-document restyle may arrive as one large range, while edits
+        // arrive as individual paragraphs. Resolve actual paragraph boundaries
+        // after every style pass so headings, lists, quotes, and code keep their
+        // chosen metrics and each line gets only its own fence-depth offset.
+        guard let storage, storage.length > 0 else { return }
+        let ns = storage.string as NSString
+        var visited = Set<Int>()
+        for candidate in ranges {
+            var location = candidate.location
+            let end = min(NSMaxRange(candidate), ns.length)
+            while location < end {
+                let paragraph = ns.paragraphRange(for: NSRange(location: location, length: 0))
+                defer { location = NSMaxRange(paragraph) }
+                guard visited.insert(paragraph.location).inserted,
+                      let depth = storage.attribute(.markdownFenceDepth, at: paragraph.location, effectiveRange: nil) as? Int,
+                      depth > 1,
+                      let style = storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle,
+                      let indented = style.mutableCopy() as? NSMutableParagraphStyle else { continue }
+                let offset = CGFloat(depth - 1) * MarkdownTextLayoutFragment.markdownFenceRailWidth
+                indented.firstLineHeadIndent += offset
+                indented.headIndent += offset
+                if !indented.tabStops.isEmpty {
+                    indented.tabStops = indented.tabStops.map {
+                        NSTextTab(textAlignment: $0.alignment, location: $0.location + offset, options: $0.options)
+                    }
+                } else if indented.defaultTabInterval > 0 {
+                    // AppKit's repeating tab stops are anchored to x=0, even
+                    // when the paragraph starts after a fence rail. Materialize
+                    // shifted stops so leading tabs in nested lists keep their
+                    // columns relative to the enclosing fence.
+                    let interval = indented.defaultTabInterval
+                    indented.tabStops = (1...24).map {
+                        NSTextTab(textAlignment: .left, location: offset + CGFloat($0) * interval)
+                    }
+                }
+                storage.addAttribute(.paragraphStyle, value: indented, range: paragraph)
             }
         }
     }
