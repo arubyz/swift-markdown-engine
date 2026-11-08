@@ -11,17 +11,15 @@ import AppKit
 
 enum MarkdownInputHandler {
 
-    private static let markdownFenceOpening = try! NSRegularExpression(
-        pattern: #"^(`{3,})[ \t]*markdown[ \t]*$"#, options: [.caseInsensitive]
-    )
-
     /// Complete a newly typed Markdown fence without replacing the text view.
     /// The extra blank line leaves the caret in an editable body paragraph.
     static func completeMarkdownFence(
-        textView: NSTextView, affectedCharRange: NSRange, replacementString: String?
+        textView: NSTextView, affectedCharRange: NSRange, replacementString: String?,
+        codeTokens: [MarkdownToken]
     ) -> Bool {
         guard replacementString == "\n", affectedCharRange.length == 0,
               (textView as? NativeTextView)?.configuration.renderMarkdownCodeFences == true else { return false }
+        guard !MarkdownDetection.isInsideCodeBlock(location: affectedCharRange.location, codeTokens: codeTokens) else { return false }
         let source = textView.string as NSString
         let line = source.lineRange(for: NSRange(location: affectedCharRange.location, length: 0))
         let lineEnd = NSMaxRange(line)
@@ -31,9 +29,8 @@ enum MarkdownInputHandler {
         let opening = source.substring(with: NSRange(
             location: line.location, length: affectedCharRange.location - line.location
         ))
-        let full = NSRange(location: 0, length: (opening as NSString).length)
-        guard let match = markdownFenceOpening.firstMatch(in: opening, range: full) else { return false }
-        let marker = (opening as NSString).substring(with: match.range(at: 1))
+        guard CodeFence.isMarkdownOpening(opening) else { return false }
+        let marker = String(repeating: "`", count: CodeFence.markerLength(in: opening))
         let suffix = source.substring(from: affectedCharRange.location)
         let close = try! NSRegularExpression(pattern: #"^(?:[ \t]*\r?\n)*(`{3,})[ \t]*(?:\r?\n|$)"#)
         if let nextClose = close.firstMatch(

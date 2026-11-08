@@ -924,7 +924,8 @@ extension NativeTextViewCoordinator {
         defer { PerfTrace.checkpoint("shouldOut") }
         return PerfTrace.measure("smartInput") {
             if MarkdownInputHandler.completeMarkdownFence(
-                textView: textView, affectedCharRange: affectedCharRange, replacementString: replacementString
+                textView: textView, affectedCharRange: affectedCharRange, replacementString: replacementString,
+                codeTokens: parsed.codeTokens
             ) {
                 return false
             }

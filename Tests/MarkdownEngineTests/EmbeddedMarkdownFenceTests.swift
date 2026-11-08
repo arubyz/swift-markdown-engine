@@ -132,7 +132,7 @@ struct EmbeddedMarkdownFenceTests {
             let bounds = styled.first {
                 NSIntersectionRange($0.range, range).length > 0 && $0.attributes[.latexBounds] is NSValue
             }?.attributes[.latexBounds] as? NSValue
-            #expect(bounds?.rectValue.width == 200 - MarkdownTextLayoutFragment.markdownFenceRailWidth)
+            #expect(bounds?.rectValue.width == 200 - CodeBlockStyle.default.markdownFenceRailWidth)
         }
         for kind in [MarkdownTokenKind.inlineLatex, .blockLatex] {
             let range = parsed.tokens.first { $0.kind == kind }?.range ?? NSRange(location: 0, length: 0)
@@ -186,7 +186,7 @@ struct EmbeddedMarkdownFenceTests {
                 stop.pointee = true
             }
         }
-        #expect(resizedImage?.rectValue.width == 80 - MarkdownTextLayoutFragment.markdownFenceRailWidth)
+        #expect(resizedImage?.rectValue.width == 80 - CodeBlockStyle.default.markdownFenceRailWidth)
         let mathRange = parsed.tokens.first { $0.kind == .blockLatex }?.range ?? NSRange(location: 0, length: 0)
         _ = TextStylingService.restyle(
             textView: view, layoutBridge: bridge,
@@ -198,7 +198,7 @@ struct EmbeddedMarkdownFenceTests {
         let mathStyle = view.textStorage?.attribute(
             .paragraphStyle, at: mathRange.location, effectiveRange: nil
         ) as? NSParagraphStyle
-        #expect(mathStyle?.firstLineHeadIndent == MarkdownTextLayoutFragment.markdownFenceRailWidth)
+        #expect(mathStyle?.firstLineHeadIndent == CodeBlockStyle.default.markdownFenceRailWidth)
     }
 
     @Test("Nested Markdown token expansion has no fixed depth limit")
@@ -320,7 +320,7 @@ struct EmbeddedMarkdownFenceTests {
                 Issue.record("Missing paragraph style for \(label)")
                 continue
             }
-            let offset = CGFloat(depth - 1) * MarkdownTextLayoutFragment.markdownFenceRailWidth
+            let offset = CGFloat(depth - 1) * CodeBlockStyle.default.markdownFenceRailWidth
             #expect(shifted.firstLineHeadIndent == original.firstLineHeadIndent + offset)
             #expect(shifted.headIndent == original.headIndent + offset)
             #expect(shifted.tailIndent == original.tailIndent)
@@ -384,7 +384,7 @@ struct EmbeddedMarkdownFenceTests {
             let inner = ns.range(of: "inner-\(level)")
             let rootX = bridge.boundingRect(forCharacterRange: root, in: container).minX
             let innerX = bridge.boundingRect(forCharacterRange: inner, in: container).minX
-            #expect(abs((innerX - rootX) - MarkdownTextLayoutFragment.markdownFenceRailWidth) < 1,
+            #expect(abs((innerX - rootX) - CodeBlockStyle.default.markdownFenceRailWidth) < 1,
                     "list level \(level): root x=\(rootX), inner x=\(innerX)")
         }
     }
@@ -459,4 +459,33 @@ struct EmbeddedMarkdownFenceTests {
         view.insertText("\n", replacementRange: view.selectedRange())
         #expect(view.string == "````markdown\n```markdown\n\n```\n\n````\n")
     }
+    @Test("Markdown completion stays literal inside ordinary code")
+    func completionInsideOrdinaryCode() {
+        _ = NSApplication.shared
+        let text = "````swift\n```markdown\ncontent\n````\n"
+        let view = NativeTextView(frame: NSRect(x: 0, y: 0, width: 500, height: 200))
+        let delegate = coordinator(text, enabled: true)
+        view.configuration.renderMarkdownCodeFences = true
+        view.delegate = delegate
+        delegate.textView = view
+        view.string = text
+        let caret = NSMaxRange((text as NSString).range(of: "```markdown"))
+        view.setSelectedRange(NSRange(location: caret, length: 0))
+        view.insertText("\n", replacementRange: view.selectedRange())
+        #expect(view.string == "````swift\n```markdown\n\ncontent\n````\n")
+    }
+
+    @Test("Large nested documents retain tokens after an interior edit")
+    func largeNestedDocument() {
+        let body = (0..<1000).map { "## Heading \($0)\nParagraph with **bold** text and a [link](https://example.com).\n" }.joined()
+        let text = "`````markdown\n````markdown\n```markdown\n" + body + "```\n````\n`````\n"
+        let delegate = coordinator(text, enabled: true)
+        let start = Date()
+        let initial = delegate.parsedDocument(for: text)
+        delegate.cachedParsedDocument = nil
+        let edited = delegate.parsedDocument(for: text.replacingOccurrences(of: "Heading 500", with: "Edited heading 500"))
+        #expect(initial.tokens.count == edited.tokens.count)
+        print("Nested parse smoke: \(text.utf16.count) UTF-16 units, two parses in \(Date().timeIntervalSince(start)) seconds")
+    }
+
 }

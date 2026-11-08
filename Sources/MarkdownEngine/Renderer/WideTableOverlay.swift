@@ -314,7 +314,7 @@ extension NativeTextView {
             let anchorInHost = convert(anchorTopLeft, to: host)
             let columnLeft = breakout ? anchorInHost.x - hostBounds.minX : anchorTopLeft.x
             let depth = storage.attribute(.markdownFenceDepth, at: attrRange.location, effectiveRange: nil) as? Int ?? 1
-            let fenceInset = CGFloat(max(0, depth - 1)) * MarkdownTextLayoutFragment.markdownFenceRailWidth
+            let fenceInset = configuration.codeBlock.markdownFenceInset(at: depth)
             let overlayFrame: NSRect
             if breakout && fenceInset == 0 {
                 overlayFrame = NSRect(x: hostBounds.minX, y: anchorInHost.y, width: hostBounds.width, height: totalHeight)

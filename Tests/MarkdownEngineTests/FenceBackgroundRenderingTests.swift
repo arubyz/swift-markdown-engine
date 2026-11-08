@@ -13,7 +13,7 @@ struct FenceBackgroundRenderingTests {
         var appearanceDidChangeNotification: Notification.Name? { nil }
     }
 
-    private func makeEditor(_ text: String, rendersMarkdownFences: Bool = false) throws
+    private func makeEditor(_ text: String, rendersMarkdownFences: Bool = false, railWidth: CGFloat = 10) throws
         -> (coordinator: NativeTextViewCoordinator, view: NativeTextView) {
         _ = NSApplication.shared
         let coordinator = NativeTextViewCoordinator(
@@ -22,6 +22,7 @@ struct FenceBackgroundRenderingTests {
         )
         coordinator.configuration.services.syntaxHighlighter = TestSyntaxHighlighter()
         coordinator.configuration.renderMarkdownCodeFences = rendersMarkdownFences
+        coordinator.configuration.codeBlock.markdownFenceRailWidth = railWidth
         let view = NativeTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 300))
         view.configuration = coordinator.configuration
         view.backgroundColor = .clear
@@ -77,6 +78,9 @@ struct FenceBackgroundRenderingTests {
         #expect(fills.contains { $0.railColors.count == 0 })
         #expect(fills.contains { $0.railColors.count == 1 })
         let deepest = try #require(fills.first { $0.railColors.count == 2 })
+        let outer = try #require(fills.first { $0.railColors.isEmpty })
+        let middle = try #require(fills.first { $0.railColors.count == 1 })
+        #expect(deepest.railColors == [outer.color, middle.color])
         #expect(deepest.rect.minX == 0)
         #expect(deepest.rect.width == 300)
         let bitmap = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
@@ -89,6 +93,19 @@ struct FenceBackgroundRenderingTests {
             let alpha = max(bitmap.colorAt(x: column, y: y)?.alphaComponent ?? 0,
                             bitmap.colorAt(x: column, y: topY)?.alphaComponent ?? 0)
             #expect(alpha > 0.8, "The inner fence and both rails should render under text")
+        }
+    }
+
+    @Test("Restyling preserves a custom fence indent without accumulating it")
+    func repeatedRestyling() throws {
+        let text = "````markdown\nOuter\n```markdown\nInner\n```\n````\n"
+        let editor = try makeEditor(text, rendersMarkdownFences: true, railWidth: 17)
+        let location = (text as NSString).range(of: "Inner").location
+        let range = (text as NSString).paragraphRange(for: NSRange(location: location, length: 0))
+        for _ in 0..<3 {
+            editor.coordinator.restyleParagraphs([range], in: editor.view)
+            let style = editor.view.textStorage?.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
+            #expect(style?.firstLineHeadIndent == 17)
         }
     }
 

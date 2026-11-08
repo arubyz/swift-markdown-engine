@@ -158,7 +158,7 @@ extension NativeTextViewCoordinator {
             for (range, attrs) in runs {
                 built.setAttributes(attrs, range: range)
             }
-            TextStylingService.indentMarkdownFenceParagraphs(in: built, ranges: [fullRange])
+            TextStylingService.indentMarkdownFenceParagraphs(in: built, ranges: [fullRange], style: configuration.codeBlock)
         }
 
         // ONE live-storage mutation carries the whole styled document across. This is the

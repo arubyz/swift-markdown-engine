@@ -15,16 +15,10 @@ import Foundation
 // MARK: - Tokenizer
 enum MarkdownTokenizer {
 
-    private static let markdownFenceOpening = try! NSRegularExpression(
-        pattern: #"^`{3,}[ \t]*markdown[ \t]*\r?\n$"#, options: [.caseInsensitive]
-    )
-
     static func isMarkdownFence(openingLine: NSRange, in text: NSString) -> Bool {
         guard openingLine.length > 0, NSMaxRange(openingLine) <= text.length else { return false }
         let line = text.substring(with: openingLine)
-        return markdownFenceOpening.firstMatch(
-            in: line, range: NSRange(location: 0, length: (line as NSString).length)
-        ) != nil
+        return CodeFence.isMarkdownOpening(line)
     }
 
     /// Body of a closed `markdown` fence, in the parent document's coordinates.
