@@ -87,12 +87,14 @@ struct FenceBackgroundRenderingTests {
         view.cacheDisplay(in: view.bounds, to: bitmap)
         let scale = CGFloat(bitmap.pixelsWide) / view.bounds.width
         let y = Int(deepest.rect.midY * scale)
-        let topY = bitmap.pixelsHigh - y - 1
-        for x in [5, 15, 290] {
+        for (x, expected) in [(5, outer.color), (15, middle.color), (290, deepest.color)] {
             let column = Int(CGFloat(x) * scale)
-            let alpha = max(bitmap.colorAt(x: column, y: y)?.alphaComponent ?? 0,
-                            bitmap.colorAt(x: column, y: topY)?.alphaComponent ?? 0)
-            #expect(alpha > 0.8, "The inner fence and both rails should render under text")
+            let actual = try #require(bitmap.colorAt(x: column, y: y)?.usingColorSpace(.deviceRGB))
+            let rgb = try #require(expected.usingColorSpace(.deviceRGB))
+            #expect(abs(actual.redComponent - rgb.redComponent) < 0.02)
+            #expect(abs(actual.greenComponent - rgb.greenComponent) < 0.02)
+            #expect(abs(actual.blueComponent - rgb.blueComponent) < 0.02)
+            #expect(actual.alphaComponent > 0.98)
         }
     }
 
@@ -106,6 +108,43 @@ struct FenceBackgroundRenderingTests {
             editor.coordinator.restyleParagraphs([range], in: editor.view)
             let style = editor.view.textStorage?.attribute(.paragraphStyle, at: location, effectiveRange: nil) as? NSParagraphStyle
             #expect(style?.firstLineHeadIndent == 17)
+        }
+    }
+
+    @Test("Delimiter edits match a fresh parse and fresh fence layout")
+    func delimiterEditEquivalence() throws {
+        let text = "Before\n`````markdown\nOuter\n````markdown\nMiddle\n```markdown\n# Inner\n- item\n```\n````\n`````\nAfter\n"
+        let editor = try makeEditor(text, rendersMarkdownFences: true)
+        let edits = [("```markdown\n# Inner", "```swift\n# Inner"),
+                     ("```swift\n# Inner", "```markdown\n# Inner"),
+                     ("\n```\n````\n", "\n``\n````\n"),
+                     ("\n``\n````\n", "\n```\n````\n"),
+                     ("`````markdown", "``````markdown"),
+                     ("``````markdown", "`````markdown")]
+        for (needle, replacement) in edits {
+            let range = (editor.view.string as NSString).range(of: needle)
+            #expect(range.location != NSNotFound)
+            editor.view.setSelectedRange(range)
+            editor.view.insertText(replacement, replacementRange: range)
+            editor.view.setSelectedRange(NSRange(location: 0, length: 0))
+            let fresh = try makeEditor(editor.view.string, rendersMarkdownFences: true)
+            fresh.view.setSelectedRange(NSRange(location: 0, length: 0))
+            let actual = editor.coordinator.parsedDocument(for: editor.view.string).tokens
+            let expected = fresh.coordinator.parsedDocument(for: fresh.view.string).tokens
+            #expect(actual.count == expected.count)
+            for (a, b) in zip(actual, expected) {
+                #expect(a.kind == b.kind && a.range == b.range && a.contentRange == b.contentRange && a.markerRanges == b.markerRanges)
+            }
+            let storage = try #require(editor.view.textStorage)
+            let reference = try #require(fresh.view.textStorage)
+            for index in 0..<storage.length {
+                #expect(storage.attribute(.markdownFenceDepth, at: index, effectiveRange: nil) as? Int
+                    == reference.attribute(.markdownFenceDepth, at: index, effectiveRange: nil) as? Int)
+                let a = storage.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle
+                let b = reference.attribute(.paragraphStyle, at: index, effectiveRange: nil) as? NSParagraphStyle
+                #expect(a?.firstLineHeadIndent == b?.firstLineHeadIndent)
+                #expect(a?.headIndent == b?.headIndent)
+            }
         }
     }
 
