@@ -91,6 +91,7 @@ struct MarkdownTextMutationTests {
         var received: [MarkdownTextMutation] = []
         let text = "call 555 1234 now"
         let textView = makeEditor(text) { received.append($0) }
+        textView.allowsUndo = true
 
         let affected = NSRange(location: 5, length: 8)   // "555 1234"
         #expect(textView.shouldChangeText(in: affected, replacementString: nil))
@@ -99,5 +100,38 @@ struct MarkdownTextMutationTests {
 
         #expect(textView.string == text)
         #expect(received.isEmpty)
+        #expect(textView.undoManager?.canUndo == false,
+                "Derived attributes must not create a source undo entry")
     }
+
+    @Test("attribute-only validation preserves undo registration and real text undo")
+    func attributeUndoSuppressionIsScoped() throws {
+        let textView = makeEditor("call 555 1234 now") { _ in }
+        textView.allowsUndo = true
+        let manager = try #require(textView.undoManager)
+        manager.groupsByEvent = false
+        let range = NSRange(location: 5, length: 8)
+
+        manager.disableUndoRegistration()
+        #expect(textView.shouldChangeText(in: range, replacementString: nil))
+        #expect(!manager.isUndoRegistrationEnabled)
+        manager.enableUndoRegistration()
+        #expect(textView.shouldChangeText(in: range, replacementString: nil))
+        #expect(manager.isUndoRegistrationEnabled)
+        #expect(!manager.canUndo)
+
+        // Character replacements, including automatic corrections, still use
+        // the same native validation path and must remain undoable.
+        manager.beginUndoGrouping()
+        #expect(textView.shouldChangeText(in: range, replacementString: "555 5678"))
+        textView.textStorage?.replaceCharacters(in: range, with: "555 5678")
+        textView.didChangeText()
+        manager.endUndoGrouping()
+        #expect(textView.string == "call 555 5678 now")
+        manager.undo()
+        #expect(textView.string == "call 555 1234 now")
+        manager.redo()
+        #expect(textView.string == "call 555 5678 now")
+    }
+
 }

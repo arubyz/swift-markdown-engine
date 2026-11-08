@@ -136,8 +136,14 @@ extension NativeTextViewCoordinator {
         guard !tv.hasMarkedText() else { return }
         let safeLocation = min(rawSelRange.location, fullLength)
         let safeSelRange = NSRange(location: safeLocation, length: 0)
+        let stylingSelection = NSRange(location: safeLocation,
+                                       length: min(rawSelRange.length, fullLength - safeLocation))
+        let previousSelection = previousSelectedRange
         previousCaretLocation = safeSelRange.location
-        previousSelectedRange = safeSelRange
+        // A native undo can select its entire restored range. The styler sees
+        // that span and reveals task syntax throughout it; remember the same
+        // span so the next selection/edit knows what needs to be hidden again.
+        previousSelectedRange = stylingSelection
         PerfTrace.begin(docLength: fullLength)
 
         // Edit descriptor, hoisted above the wiki sync so both it and the
@@ -228,11 +234,25 @@ extension NativeTextViewCoordinator {
             return editedRange.location == NSNotFound ? safeSelRange : editedRange
         }()
         let editedParagraphs = paragraphRanges(in: fullText, intersecting: safeEditedRange)
-        let paragraphCandidates: [NSRange] = [
+        var paragraphCandidates: [NSRange] = [
             previousParagraph,
             paragraphRange,
             nextParagraph
         ] + editedParagraphs
+        if let previousSelection, previousSelection.location != NSNotFound,
+           previousSelection.length > 0, previousSelection != stylingSelection {
+            // Mid-edit selection notifications defer their restyle. Include the
+            // old selected span here, even when the character edit is far from
+            // the revealed task list. Enclose both its old and shifted bounds:
+            // undo need not provide a trustworthy pre-edit replacement range.
+            let delta = lengthDelta == Int.min ? 0 : lengthDelta
+            let start = max(0, min(fullLength, previousSelection.location + min(0, delta)))
+            let end = min(fullLength, NSMaxRange(previousSelection) + max(0, delta))
+            if end > start {
+                paragraphCandidates.append(fullText.paragraphRange(
+                    for: NSRange(location: start, length: end - start)))
+            }
+        }
 
         let backtickCount = PerfTrace.measure("backtick") {
             incrementalBacktickCensus(fullText: fullText, editedRange: editedRange,
@@ -254,7 +274,7 @@ extension NativeTextViewCoordinator {
         pendingPreEditActiveTokenIndices = nil
 
         activeTokenIndices = PerfTrace.measure("activeTok") {
-            activeTokenIndices(parsed: parsed, selection: safeSelRange, in: fullText, suppressed: !tv.isEditable)
+            activeTokenIndices(parsed: parsed, selection: stylingSelection, in: fullText, suppressed: !tv.isEditable)
         }
         filterImageEmbedActiveTokens(parsed: parsed, text: fullText, selectionLocation: safeSelRange.location)
         updateAutocorrectSettings(
@@ -721,7 +741,11 @@ extension NativeTextViewCoordinator {
 
         self.previousActiveTokenIndices = self.activeTokenIndices
         self.previousCaretLocation = caretLoc
-        self.previousSelectedRange = selRange
+        // If styling was deferred, textDidChange still needs the old selected
+        // span to re-hide syntax outside the edit's own paragraphs.
+        if !shouldSkipSelectionRestyle {
+            self.previousSelectedRange = selRange
+        }
 
         // Skip during a pending edit — viewRect is stale until textDidChange's restyle runs; otherwise the overlay flashes to the old Y before settling.
         if !shouldSkipSelectionRestyle {

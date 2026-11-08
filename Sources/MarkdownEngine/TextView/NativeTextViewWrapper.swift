@@ -71,6 +71,8 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     public var documentId: String
     /// When `false` the editor renders read-only with no caret.
     public var isEditable: Bool
+
+    public var editorSession: MarkdownEditorSession?
     /// Optional two-way focus state. Changes to the binding request or release
     /// first responder status; an initial request waits for window attachment.
     /// Repeated values (including `.constant(true)`) do not reclaim focus.
@@ -185,7 +187,8 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         retainedScrollDocumentIds: Set<String>? = nil,
         onPersistScrollOffset: ((String, CGFloat) -> Void)? = nil,
         restoreScrollOffset: ((String) -> CGFloat?)? = nil,
-        isCursorExcluded: ((CGPoint) -> Bool)? = nil
+        isCursorExcluded: ((CGPoint) -> Bool)? = nil,
+        editorSession: MarkdownEditorSession? = nil
     ) {
         self._text = text
         self._isWikiLinkActive = isWikiLinkActive
@@ -215,6 +218,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         self.onPersistScrollOffset = onPersistScrollOffset
         self.restoreScrollOffset = restoreScrollOffset
         self.isCursorExcluded = isCursorExcluded
+        self.editorSession = editorSession
     }
 
     public func sizeThatFits(
@@ -239,6 +243,7 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
     }
 
     public func makeNSView(context: Context) -> NSScrollView {
+        editorSession?.coordinator = context.coordinator
         let scrollView = ClampedScrollView()
         scrollView.fitsContent = configuration.heightBehavior == .fitsContent
         scrollView.borderType = .noBorder
