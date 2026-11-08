@@ -171,7 +171,8 @@ struct TextStylingService {
                 .foregroundColor: configuration.theme.bodyText,
                 .paragraphStyle: paragraphStyle
             ],
-            to: textView.textStorage
+            to: textView.textStorage,
+            fenceStyle: configuration.codeBlock
         )
         textView.textStorage?.endEditing()
         let attrMs = Double(DispatchTime.now().uptimeNanoseconds - attrT0) / 1_000_000
@@ -194,7 +195,8 @@ struct TextStylingService {
         paragraphs: [NSRange],
         baseAttributes: [NSAttributedString.Key: Any],
         to storage: NSMutableAttributedString?,
-        minimumParagraphsForIndex: Int = 32
+        minimumParagraphsForIndex: Int = 32,
+        fenceStyle: CodeBlockStyle = .default
     ) {
         // Rescanning every range per paragraph is paragraphs × ranges — fine for the 1-3
         // paragraphs a keystroke restyles, 10.8s of main thread for a selection-wide
@@ -219,12 +221,12 @@ struct TextStylingService {
             }
         }
 
-        indentMarkdownFenceParagraphs(in: storage, ranges: paragraphs)
+        indentMarkdownFenceParagraphs(in: storage, ranges: paragraphs, style: fenceStyle)
     }
 
     /// Compose fence depth with whichever paragraph style the normal styler
     /// selected. Shared by the initial flattened-run load and edit restyles.
-    static func indentMarkdownFenceParagraphs(in storage: NSMutableAttributedString?, ranges: [NSRange]) {
+    static func indentMarkdownFenceParagraphs(in storage: NSMutableAttributedString?, ranges: [NSRange], style fenceStyle: CodeBlockStyle = .default) {
         // A full-document restyle may arrive as one large range, while edits
         // arrive as individual paragraphs. Resolve actual paragraph boundaries
         // after every style pass so headings, lists, quotes, and code keep their
@@ -243,7 +245,7 @@ struct TextStylingService {
                       depth > 1,
                       let style = storage.attribute(.paragraphStyle, at: paragraph.location, effectiveRange: nil) as? NSParagraphStyle,
                       let indented = style.mutableCopy() as? NSMutableParagraphStyle else { continue }
-                let offset = CGFloat(depth - 1) * MarkdownTextLayoutFragment.markdownFenceRailWidth
+                let offset = fenceStyle.markdownFenceInset(at: depth)
                 indented.firstLineHeadIndent += offset
                 indented.headIndent += offset
                 if !indented.tabStops.isEmpty {

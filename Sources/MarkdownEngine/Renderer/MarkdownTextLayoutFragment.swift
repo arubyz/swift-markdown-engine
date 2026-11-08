@@ -70,7 +70,6 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
     /// shared so the styler's text indent and the painted bars line up.
     static let blockquoteIndentPerLevel: CGFloat = 18
     static let blockquoteBarWidth: CGFloat = 3
-    static let markdownFenceRailWidth: CGFloat = 10
 
     /// Strip below an overlay block for the legacy-small scroller (~11pt) + buffer.
     static let scrollableBlockScrollerStrip: CGFloat = 14
@@ -158,7 +157,8 @@ final class MarkdownTextLayoutFragment: NSTextLayoutFragment {
 
     private func markdownFenceTextOffset(at location: Int, in storage: NSTextStorage) -> CGFloat {
         let depth = storage.attribute(.markdownFenceDepth, at: location, effectiveRange: nil) as? Int ?? 1
-        return CGFloat(max(0, depth - 1)) * Self.markdownFenceRailWidth
+        return ((textLayoutManager?.textContainer?.textView as? NativeTextView)?.configuration.codeBlock ?? .default)
+            .markdownFenceInset(at: depth)
     }
 
     /// Returns the drawing position for a character at `docIndex` (document-level NSRange location).

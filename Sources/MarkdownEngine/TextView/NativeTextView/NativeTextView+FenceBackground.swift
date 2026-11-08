@@ -22,9 +22,9 @@ extension NativeTextView {
             for (level, color) in background.railColors.enumerated() {
                 color.setFill()
                 NSBezierPath(rect: CGRect(
-                    x: background.rect.minX + CGFloat(level) * MarkdownTextLayoutFragment.markdownFenceRailWidth,
+                    x: background.rect.minX + CGFloat(level) * max(0, configuration.codeBlock.markdownFenceRailWidth),
                     y: background.rect.minY,
-                    width: MarkdownTextLayoutFragment.markdownFenceRailWidth,
+                    width: max(0, configuration.codeBlock.markdownFenceRailWidth),
                     height: background.rect.height
                 )).fill()
             }

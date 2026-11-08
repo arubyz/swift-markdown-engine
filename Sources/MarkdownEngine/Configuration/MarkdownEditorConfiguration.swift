@@ -279,6 +279,16 @@ public struct MarkerStyle: Sendable {
 
 /// Styling for fenced code blocks (```language ... ```).
 public struct CodeBlockStyle: Sendable {
+    /// Width of each ancestor rail and the corresponding content indent.
+    public var markdownFenceRailWidth: CGFloat = 10
+    /// Repeating blend fractions toward body ink, starting with the outer fence.
+    /// An empty array uses the ordinary code background at every depth.
+    public var markdownFenceShadeFractions: [CGFloat] = [0, 0.065, 0.13, 0.195]
+
+    func markdownFenceInset(at depth: Int) -> CGFloat {
+        CGFloat(max(0, depth - 1)) * max(0, markdownFenceRailWidth)
+    }
+
     /// Code-block font size as a fraction of the document base font size.
     public var fontSizeScale: CGFloat
     /// Vertical paragraph spacing applied above and below the code block.

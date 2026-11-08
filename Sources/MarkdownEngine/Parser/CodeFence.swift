@@ -2,6 +2,13 @@ import Foundation
 
 /// Backtick fence rules shared by block classification and token ranges.
 enum CodeFence {
+    static func isMarkdownOpening(_ line: String) -> Bool {
+        let count = markerLength(in: line)
+        guard count >= 3 else { return false }
+        return (line as NSString).substring(from: count)
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "markdown"
+    }
+
     static func markerLength(in line: String) -> Int {
         let text = line as NSString
         var count = 0

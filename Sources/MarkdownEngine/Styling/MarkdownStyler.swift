@@ -66,7 +66,7 @@ extension MarkdownStyler {
                 count + (token.range.location >= body.location
                     && NSMaxRange(token.range) <= NSMaxRange(body) ? 1 : 0)
             }
-            return CGFloat(max(0, depth - 1)) * MarkdownTextLayoutFragment.markdownFenceRailWidth
+            return configuration.codeBlock.markdownFenceInset(at: depth)
         }
 
         // Per-kind indexed arrays: the cached classification, or a one-off

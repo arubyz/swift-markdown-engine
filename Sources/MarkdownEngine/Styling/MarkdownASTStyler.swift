@@ -871,8 +871,10 @@ enum MarkdownASTStyler {
     }
 
     private static func codeBackground(at depth: Int, ctx: Ctx) -> NSColor {
-        ctx.codeBackground.blended(
-            withFraction: CGFloat((depth - 1) % 4) * 0.065,
+        let shades = ctx.config.codeBlock.markdownFenceShadeFractions
+        let fraction = shades.isEmpty ? 0 : shades[max(0, depth - 1) % shades.count]
+        return ctx.codeBackground.blended(
+            withFraction: min(1, max(0, fraction)),
             of: ctx.theme.bodyText
         ) ?? ctx.codeBackground
     }

@@ -542,7 +542,11 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
         }
         let markdownFenceModeChanged = context.coordinator.configuration.renderMarkdownCodeFences
             != configuration.renderMarkdownCodeFences
-        if markdownFenceModeChanged {
+        let fenceStyleChanged = context.coordinator.configuration.codeBlock.markdownFenceRailWidth != configuration.codeBlock.markdownFenceRailWidth
+            || context.coordinator.configuration.codeBlock.markdownFenceShadeFractions != configuration.codeBlock.markdownFenceShadeFractions
+        if markdownFenceModeChanged || fenceStyleChanged {
+            context.coordinator.configuration.codeBlock = configuration.codeBlock
+            textView.configuration.codeBlock = configuration.codeBlock
             context.coordinator.configuration.renderMarkdownCodeFences = configuration.renderMarkdownCodeFences
             textView.configuration.renderMarkdownCodeFences = configuration.renderMarkdownCodeFences
             context.coordinator.cachedParsedDocument = nil
