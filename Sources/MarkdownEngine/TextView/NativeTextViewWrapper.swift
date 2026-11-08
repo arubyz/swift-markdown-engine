@@ -540,6 +540,14 @@ public struct NativeTextViewWrapper: NSViewRepresentable {
             let coordinator = context.coordinator
             DispatchQueue.main.async { coordinator.isWikiLinkActive = false }
         }
+        let markdownFenceModeChanged = context.coordinator.configuration.renderMarkdownCodeFences
+            != configuration.renderMarkdownCodeFences
+        if markdownFenceModeChanged {
+            context.coordinator.configuration.renderMarkdownCodeFences = configuration.renderMarkdownCodeFences
+            textView.configuration.renderMarkdownCodeFences = configuration.renderMarkdownCodeFences
+            context.coordinator.cachedParsedDocument = nil
+            context.coordinator.didInitialFormatting = false
+        }
         // Sync the input-behavior toggles (auto-close pairs, list helpers).
         // The keystroke handlers read textView.configuration live, but only
         // makeNSView used to write it — an embedder settings change was inert

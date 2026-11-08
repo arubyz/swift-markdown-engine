@@ -923,6 +923,11 @@ extension NativeTextViewCoordinator {
 
         defer { PerfTrace.checkpoint("shouldOut") }
         return PerfTrace.measure("smartInput") {
+            if MarkdownInputHandler.completeMarkdownFence(
+                textView: textView, affectedCharRange: affectedCharRange, replacementString: replacementString
+            ) {
+                return false
+            }
             // Block LaTeX auto-wrap: insert newlines to keep $$ on its own line
             if MarkdownInputHandler.handleBlockLatexAutoWrap(
                 textView: textView,

@@ -32,6 +32,8 @@ struct MarkdownHTMLRendererTests {
         #expect(html("```swift\nlet x = 1\n```") == "<pre><code class=\"language-swift\">let x = 1</code></pre>")
         #expect(html("```\nplain\n```") == "<pre><code>plain</code></pre>")
         #expect(html("```\n<a> & <b>\n```") == "<pre><code>&lt;a&gt; &amp; &lt;b&gt;</code></pre>")
+        #expect(html("````markdown\n```swift\ncode\n```\n````")
+                == "<pre><code class=\"language-markdown\">```swift\ncode\n```</code></pre>")
     }
 
     @Test("unordered and ordered lists")

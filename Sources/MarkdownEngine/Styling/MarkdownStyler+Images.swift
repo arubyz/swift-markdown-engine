@@ -47,13 +47,14 @@ extension MarkdownStyler {
             }
 
             let imageEmbedConfig = ctx.configuration.imageEmbed
-            let maxWidth: CGFloat = {
+            let containerWidth: CGFloat = {
                 if let tc = ctx.layoutBridge?.firstTextContainer {
                     let w = tc.containerSize.width - tc.lineFragmentPadding * 2
                     if w > 0 && w < imageEmbedConfig.unreasonableMaxWidth { return w }
                 }
                 return imageEmbedConfig.fallbackMaxWidth
             }()
+            let maxWidth = max(1, containerWidth - ctx.markdownFenceTextInset(for: token))
 
             let minWidth = imageEmbedConfig.minimumWidth
             let imageSize = image.size
@@ -135,13 +136,14 @@ extension MarkdownStyler {
             if let image = EmbeddedImageCache.shared.image(for: reference, services: ctx.services) {
                 let imageEmbedConfig = ctx.configuration.imageEmbed
                 // Determine max width from text container
-                let maxWidth: CGFloat = {
+                let containerWidth: CGFloat = {
                     if let tc = ctx.layoutBridge?.firstTextContainer {
                         let w = tc.containerSize.width - tc.lineFragmentPadding * 2
                         if w > 0 && w < imageEmbedConfig.unreasonableMaxWidth { return w }
                     }
                     return imageEmbedConfig.fallbackMaxWidth
                 }()
+                let maxWidth = max(1, containerWidth - ctx.markdownFenceTextInset(for: token))
 
                 let minWidth = imageEmbedConfig.minimumWidth
                 let imageSize = image.size

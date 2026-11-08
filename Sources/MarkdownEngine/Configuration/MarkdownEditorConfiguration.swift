@@ -75,6 +75,9 @@ public struct MarkdownEditorConfiguration: Sendable {
     /// Runtime-switchable; a flip rebuilds immediately and drops the document's
     /// undo stack (actions from the other mode would replay at stale ranges).
     public var rawSourceMode: Bool
+    /// Render the body of a fenced `markdown` code block as editable Markdown
+    /// in the same text view. Off by default; other code blocks are unchanged.
+    public var renderMarkdownCodeFences: Bool
     /// Opt-in constructs beyond pure markdown (e.g. `==highlight==`). Empty by
     /// default: unregistered syntax stays literal text. Order defines match
     /// precedence among extensions; built-in constructs always win first.
@@ -122,6 +125,7 @@ public struct MarkdownEditorConfiguration: Sendable {
         spellChecking: SpellCheckingPolicy = .default,
         heightBehavior: HeightBehavior = .scrolls,
         rawSourceMode: Bool = false,
+        renderMarkdownCodeFences: Bool = false,
         extensions: [any MarkdownExtension] = [],
         cursorFollowsSpanInk: Bool = false,
         directives: [any MarkdownDirective] = [],
@@ -152,6 +156,7 @@ public struct MarkdownEditorConfiguration: Sendable {
         self.spellChecking = spellChecking
         self.heightBehavior = heightBehavior
         self.rawSourceMode = rawSourceMode
+        self.renderMarkdownCodeFences = renderMarkdownCodeFences
         self.extensions = extensions
         self.cursorFollowsSpanInk = cursorFollowsSpanInk
         self.directives = directives

@@ -115,9 +115,7 @@ public protocol SyntaxHighlighter: Sendable {
     /// Monospace font used for fenced code blocks at the requested size.
     func codeFont(size: CGFloat) -> NSFont
 
-    /// Background color used to fill code-block paragraphs. The engine
-    /// also uses this color to detect which fragments are code blocks
-    /// when drawing custom backgrounds.
+    /// Background color used to fill fenced code-block paragraphs.
     func backgroundColor() -> NSColor
 
     /// Highlight `code` written in `language`. Return an attributed string
