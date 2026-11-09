@@ -26,11 +26,12 @@ public struct MarkdownSourceSnapshot: Sendable {
         public let children: [Node]
         /// Plain text leaves suitable for word comparison; syntax is excluded.
         public let textRanges: [NSRange]
+        public let inlineSpans: [MarkdownInlineSpan]
 
         init(kind: Kind, range: NSRange, children: [Node] = [], textRanges: [NSRange] = [],
-             attributes: Attributes = Attributes()) {
+             attributes: Attributes = Attributes(), inlineSpans: [MarkdownInlineSpan] = []) {
             self.kind = kind; self.range = range; self.children = children
-            self.textRanges = textRanges; self.attributes = attributes
+            self.textRanges = textRanges; self.attributes = attributes; self.inlineSpans = inlineSpans
         }
     }
 
@@ -68,9 +69,10 @@ public struct MarkdownSourceSnapshot: Sendable {
             var attributes = Node.Attributes()
             var children: [Node] = []
             var texts: [NSRange] = []
+            var inline: [MarkdownInlineSpan] = []
             switch block {
             case .paragraph(let range, let inlines):
-                kind = .paragraph; texts = leaves(inlines)
+                kind = .paragraph; texts = leaves(inlines); inline = MarkdownInlineSpan.project(inlines, in: ns, offset: offset)
                 // The rendering parser leaves unclosed backtick fences in a
                 // paragraph. Surface that fact to conservative source consumers.
                 var cursor = range.location
@@ -82,9 +84,9 @@ public struct MarkdownSourceSnapshot: Sendable {
                     cursor = NSMaxRange(line)
                 }
             case .heading(let level, _, _, let inlines):
-                kind = .heading; texts = leaves(inlines); attributes.headingLevel = level
+                kind = .heading; texts = leaves(inlines); inline = MarkdownInlineSpan.project(inlines, in: ns, offset: offset); attributes.headingLevel = level
             case .blockquote(let range, let inlines):
-                kind = .quote; texts = leaves(inlines)
+                kind = .quote; texts = leaves(inlines); inline = MarkdownInlineSpan.project(inlines, in: ns, offset: offset)
                 if depth < maximumDepth {
                     children = projectedChildren(ns, range: range, offset: offset,
                         configuration: configuration, depth: depth, prefix: .quote)
@@ -107,7 +109,8 @@ public struct MarkdownSourceSnapshot: Sendable {
                     hints.indentation = ns.substring(with: NSRange(location: item.range.location,
                         length: item.marker.location - item.range.location))
                     hints.sourcePrefix = hints.indentation
-                    let header = Node(kind: .paragraph, range: shifted(item.range), textRanges: leaves(item.inlines))
+                    let header = Node(kind: .paragraph, range: shifted(item.range), textRanges: leaves(item.inlines),
+                                      inlineSpans: MarkdownInlineSpan.project(item.inlines, in: ns, offset: offset))
                     var body: [Node] = [header]
                     if i > start + 1, depth < maximumDepth {
                         let contentIndent = NSMaxRange(item.marker) + 1 - item.range.location
@@ -116,7 +119,8 @@ public struct MarkdownSourceSnapshot: Sendable {
                             configuration: configuration, depth: depth, prefix: .indent(contentIndent))
                     }
                     children.append(Node(kind: .listItem, range: shifted(range), children: body,
-                        textRanges: items[start..<i].flatMap { leaves($0.inlines) }, attributes: hints))
+                        textRanges: items[start..<i].flatMap { leaves($0.inlines) }, attributes: hints,
+                        inlineSpans: body.flatMap(\.inlineSpans)))
                 }
             case .codeBlock(let range):
                 kind = .code
@@ -141,7 +145,7 @@ public struct MarkdownSourceSnapshot: Sendable {
             case .blank: kind = .blank
             case .ext(let node): kind = .custom; attributes.extensionID = node.extensionID
             }
-            return Node(kind: kind, range: shifted(block.range), children: children, textRanges: texts, attributes: attributes)
+            return Node(kind: kind, range: shifted(block.range), children: children, textRanges: texts, attributes: attributes, inlineSpans: inline)
         }
         // The rendering AST splits a list at continuation paragraphs and blank
         // lines. Rejoin these source spans before projecting the complete item
@@ -194,7 +198,7 @@ public struct MarkdownSourceSnapshot: Sendable {
 
     private static func extendingRange(_ item: Node, to end: Int) -> Node {
         Node(kind: item.kind, range: NSRange(location: item.range.location, length: end - item.range.location),
-             children: item.children, textRanges: item.textRanges, attributes: item.attributes)
+             children: item.children, textRanges: item.textRanges, attributes: item.attributes, inlineSpans: item.inlineSpans)
     }
 
     private static func extended(_ item: Node, to end: Int, source: NSString, offset: Int,
@@ -208,7 +212,7 @@ public struct MarkdownSourceSnapshot: Sendable {
             configuration: configuration, depth: depth, prefix: .indent(indent)) : []
         return Node(kind: .listItem, range: NSRange(location: item.range.location, length: end - item.range.location),
                     children: [header] + body, textRanges: header.textRanges + body.flatMap(\.textRanges),
-                    attributes: item.attributes)
+                    attributes: item.attributes, inlineSpans: header.inlineSpans + body.flatMap(\.inlineSpans))
     }
 
     private enum Prefix { case quote, indent(Int) }
@@ -268,6 +272,20 @@ public struct MarkdownSourceSnapshot: Sendable {
                                    length: intersection.length)
                 }
             }
+            func mappedRange(_ range: NSRange) -> NSRange {
+                let covered = intersecting(range)
+                let first = covered.first!, last = covered.last!
+                let start = offset + first.content + range.location - first.logical.location
+                let end = offset + last.content + NSMaxRange(range) - last.logical.location
+                return NSRange(location: start, length: end - start)
+            }
+            let spans = node.inlineSpans.flatMap { span -> [MarkdownInlineSpan] in
+                let pieces = span.isOpaque ? [span.range] : intersecting(span.range).map { NSIntersectionRange($0.logical, span.range) }
+                return pieces.map { piece in
+                    MarkdownInlineSpan(range: mappedRange(piece), sourceRange: mappedRange(span.sourceRange),
+                                       traits: span.traits, isOpaque: span.isOpaque)
+                }
+            }
             var attributes = node.attributes
             if let prefix = attributes.sourcePrefix {
                 attributes.sourcePrefix = ns.substring(with: NSRange(location: first.physical.location,
@@ -276,7 +294,7 @@ public struct MarkdownSourceSnapshot: Sendable {
             return Node(kind: node.kind,
                 range: NSRange(location: offset + first.physical.location,
                                length: NSMaxRange(last.physical) - first.physical.location),
-                children: node.children.map(map), textRanges: mappedText, attributes: attributes)
+                children: node.children.map(map), textRanges: mappedText, attributes: attributes, inlineSpans: spans)
         }
         return parse(text, offset: 0, configuration: configuration, depth: depth + 1).map(map)
     }

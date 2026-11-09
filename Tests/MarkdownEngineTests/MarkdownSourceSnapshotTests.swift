@@ -13,6 +13,12 @@ import Testing
                 #expect(NSIntersectionRange(leaf, node.range) == leaf)
                 #expect(Range(leaf, in: source) != nil)
             }
+            for span in node.inlineSpans {
+                #expect(NSIntersectionRange(span.range, node.range) == span.range)
+                #expect(NSIntersectionRange(span.sourceRange, node.range) == span.sourceRange)
+                #expect(Range(span.range, in: source) != nil)
+                #expect(Range(span.sourceRange, in: source) != nil)
+            }
             if !node.children.isEmpty {
                 let start = node.children[0].range.location
                 let end = NSMaxRange(node.children.last!.range)
@@ -68,6 +74,16 @@ import Testing
         #expect(closed.blocks[0].children[0].attributes.isClosedFence == true)
         let open = MarkdownSourceSnapshot("> ```swift\n> let x = 1\n")
         #expect(open.blocks[0].children[0].attributes.isClosedFence == false)
+    }
+
+    @Test func inlineSpansRetainNestedTraitsAndSourceScopes() {
+        let source = "> - Read **[important](destination)** and `value`.\r\n"
+        let spans = MarkdownSourceSnapshot(source).blocks[0].children[0].children[0].children[0].inlineSpans
+        let important = spans.first { (source as NSString).substring(with: $0.range) == "important" }!
+        #expect(important.traits.contains("link:destination"))
+        #expect(important.traits.contains { $0.hasPrefix("emphasis:") })
+        #expect((source as NSString).substring(with: important.sourceRange) == "**[important](destination)**")
+        #expect(spans.contains { $0.traits.contains { $0.hasPrefix("code:") } })
     }
 
     @Test func deeplyNestedContainersStopConservatively() {
